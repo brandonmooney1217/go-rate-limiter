@@ -1,6 +1,8 @@
 package ratelimiter
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -36,4 +38,41 @@ func (s *Store) GetBucket(clientID string) *TokenBucket {
 	}
 
 	return bucket
+}
+
+func (s *Store) StartCleanup(ctx context.Context, interval time.Duration, ttl time.Duration) {
+	go func() {
+		fmt.Println("[cleanup] goroutine started")
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				s.cleanup(ttl)
+			case <-ctx.Done():
+				fmt.Println("[cleanup] goroutine stopped")
+				return
+			}
+
+		}
+	}()
+}
+
+func (s *Store) cleanup(ttl time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	fmt.Printf("[cleanup] sweeping %d buckets\n", len(s.buckets))
+	for clientID, bucket := range s.buckets {
+		bucket.mu.Lock()
+		lastAccess := bucket.lastAccessTime
+		bucket.mu.Unlock()
+
+		if now.Sub(lastAccess) > ttl {
+			fmt.Printf("[cleanup] deleting stale bucket: %s (idle %s)\n", clientID, now.Sub(lastAccess))
+			delete(s.buckets, clientID)
+		}
+	}
 }
