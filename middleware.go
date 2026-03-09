@@ -3,6 +3,7 @@ package ratelimiter
 import (
 	"net"
 	"net/http"
+	"strconv"
 )
 
 func (s *Store) Middleware(next http.Handler) http.Handler {
@@ -11,7 +12,12 @@ func (s *Store) Middleware(next http.Handler) http.Handler {
 
 		bucket := s.GetBucket(clientID)
 
-		if !bucket.AllowN(1) {
+		result := bucket.AllowNResult(1)
+
+		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(result.Limit))
+		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(result.Remaining))
+		if !result.Allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(int(result.RetryAfter.Seconds())+1))
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}

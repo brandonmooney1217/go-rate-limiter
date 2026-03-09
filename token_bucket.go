@@ -13,6 +13,28 @@ type TokenBucket struct {
 	lastAccessTime time.Time
 }
 
+func (tb *TokenBucket) AllowNResult(n int) Result {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+
+	tb.refill()
+
+	if tb.tokens >= float64(n) {
+		tb.tokens -= float64(n)
+		return Result{
+			Allowed:   true,
+			Limit:     int(tb.capacity),
+			Remaining: int(tb.tokens),
+		}
+	}
+	return Result{
+		Allowed:    false,
+		Limit:      int(tb.capacity),
+		Remaining:  int(tb.tokens),
+		RetryAfter: time.Duration((float64(n) - tb.tokens) / tb.refillRate * float64(time.Second)),
+	}
+}
+
 func (tb *TokenBucket) AllowN(n int) bool {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
