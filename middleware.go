@@ -8,6 +8,7 @@ import (
 
 func (s *Store) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// get client IP addresss
 		clientID, _, _ := net.SplitHostPort(r.RemoteAddr)
 
 		bucket := s.GetBucket(clientID)
@@ -16,12 +17,12 @@ func (s *Store) Middleware(next http.Handler) http.Handler {
 
 		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(result.Limit))
 		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(result.Remaining))
+
 		if !result.Allowed {
 			w.Header().Set("Retry-After", strconv.Itoa(int(result.RetryAfter.Seconds())+1))
-			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			return
 		}
-
 		next.ServeHTTP(w, r)
 	})
 }

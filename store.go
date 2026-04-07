@@ -1,8 +1,6 @@
 package ratelimiter
 
 import (
-	"context"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -22,57 +20,20 @@ func NewStore(capacity, refillRate float64) *Store {
 	}
 }
 
-func (s *Store) GetBucket(clientID string) *TokenBucket {
+func (s *Store) GetBucket(key string) *TokenBucket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	bucket, exists := s.buckets[clientID]
+	bucket, exists := s.buckets[key]
 	if !exists {
 		bucket = &TokenBucket{
 			capacity:       s.capacity,
-			tokens:         s.capacity,
 			refillRate:     s.refillRate,
+			tokens:         s.capacity,
 			lastAccessTime: time.Now(),
 		}
-		s.buckets[clientID] = bucket
+		s.buckets[key] = bucket
 	}
 
 	return bucket
-}
-
-func (s *Store) StartCleanup(ctx context.Context, interval time.Duration, ttl time.Duration) {
-	go func() {
-		fmt.Println("[cleanup] goroutine started")
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				s.cleanup(ttl)
-			case <-ctx.Done():
-				fmt.Println("[cleanup] goroutine stopped")
-				return
-			}
-
-		}
-	}()
-}
-
-func (s *Store) cleanup(ttl time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now()
-	fmt.Printf("[cleanup] sweeping %d buckets\n", len(s.buckets))
-	for clientID, bucket := range s.buckets {
-		bucket.mu.Lock()
-		lastAccess := bucket.lastAccessTime
-		bucket.mu.Unlock()
-
-		if now.Sub(lastAccess) > ttl {
-			fmt.Printf("[cleanup] deleting stale bucket: %s (idle %s)\n", clientID, now.Sub(lastAccess))
-			delete(s.buckets, clientID)
-		}
-	}
 }
