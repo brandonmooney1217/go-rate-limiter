@@ -16,7 +16,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// create store with capacity of 10 tokens and refill rate of 1 token per second
 	store := rateLimiter.NewStore(10, 1)
 
 	store.StartCleanup(ctx, time.Second*12, time.Second*10)
@@ -29,9 +28,8 @@ func main() {
 	// create HTTP server with rate limiting middleware
 	server := &http.Server{
 		Addr:    ":8080",
-		Handler: store.Middleware(hello),
+		Handler: rateLimiter.RateLimitMiddleware(store)(hello),
 	}
-
 	fmt.Println("Server is running on http://localhost:8080")
 	go server.ListenAndServe()
 

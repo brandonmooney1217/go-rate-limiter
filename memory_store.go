@@ -7,22 +7,26 @@ import (
 	"time"
 )
 
-type Store struct {
+type MemoryStore struct {
 	mu             sync.Mutex
 	buckets        map[string]*TokenBucket
 	bucketCapacity float64
 	refillRate     float64
 }
 
-func NewStore(capacity, refillRate float64) *Store {
-	return &Store{
+func NewStore(capacity, refillRate float64) *MemoryStore {
+	return &MemoryStore{
 		buckets:        make(map[string]*TokenBucket),
 		bucketCapacity: capacity,
 		refillRate:     refillRate,
 	}
 }
 
-func (s *Store) GetBucket(key string) *TokenBucket {
+func (s *MemoryStore) AllowN(key string, n int) Result {
+	return s.GetBucket(key).AllowNResult(n)
+}
+
+func (s *MemoryStore) GetBucket(key string) *TokenBucket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -40,7 +44,7 @@ func (s *Store) GetBucket(key string) *TokenBucket {
 	return bucket
 }
 
-func (s *Store) StartCleanup(ctx context.Context, interval time.Duration, ttl time.Duration) {
+func (s *MemoryStore) StartCleanup(ctx context.Context, interval time.Duration, ttl time.Duration) {
 	// Ticker to periodically clean up expired buckets
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -59,7 +63,7 @@ func (s *Store) StartCleanup(ctx context.Context, interval time.Duration, ttl ti
 	}()
 }
 
-func (s *Store) cleanup(ttl time.Duration) {
+func (s *MemoryStore) cleanup(ttl time.Duration) {
 	fmt.Println("Cleaning up expired buckets...")
 	s.mu.Lock()
 	defer s.mu.Unlock()
