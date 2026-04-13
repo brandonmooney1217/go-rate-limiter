@@ -11,7 +11,7 @@ func RateLimitMiddleware(store BucketStore) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			clientID, _, _ := net.SplitHostPort(r.RemoteAddr)
 
-			result := store.AllowN(clientID, 1)
+			result := store.AllowN(r.Context(), clientID, 1)
 
 			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(result.Limit))
 			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(result.Remaining))

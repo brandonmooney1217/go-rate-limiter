@@ -1,10 +1,12 @@
 package ratelimiter
 
+import "context"
+
 type RateLimiter interface {
 	AllowN(n int) bool
 	AllowNResult(n int) Result
 }
 
 type BucketStore interface {
-	AllowN(key string, n int) Result
+	AllowN(ctx context.Context, key string, n int) Result
 }

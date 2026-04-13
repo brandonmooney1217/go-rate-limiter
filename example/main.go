@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -16,11 +18,24 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store := rateLimiter.NewStore(10, 1)
+	var store rateLimiter.BucketStore
 
-	store.StartCleanup(ctx, time.Second*12, time.Second*10)
+	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
+		client := redis.NewClient(&redis.Options{Addr: addr})
+		if err := client.Ping(ctx).Err(); err != nil {
+			fmt.Printf("Failed to connect to Redis at %s: %v\n", addr, err)
+			os.Exit(1)
+		}
+		store = rateLimiter.NewRedisStore(client, 10, 1, 60)
+		fmt.Printf("Using Redis store at %s\n", addr)
+	} else {
+		memStore := rateLimiter.NewStore(10, 1)
+		memStore.StartCleanup(ctx, time.Second*12,
+			time.Second*10)
+		store = memStore
+		fmt.Println("Using in-memory store")
+	}
 
-	// create handler function that responds with "Hello, World!"
 	hello := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "Hello, World!")
 	})

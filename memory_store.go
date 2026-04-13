@@ -22,7 +22,7 @@ func NewStore(capacity, refillRate float64) *MemoryStore {
 	}
 }
 
-func (s *MemoryStore) AllowN(key string, n int) Result {
+func (s *MemoryStore) AllowN(ctx context.Context, key string, n int) Result {
 	return s.GetBucket(key).AllowNResult(n)
 }
 

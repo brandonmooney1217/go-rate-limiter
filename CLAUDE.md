@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Overview
-Rate limiting library in Go with HTTP middleware. Uses the token bucket algorithm with lazy refill. Supports pluggable backends via the `BucketStore` interface (in-memory today, Redis planned). Module name: `go-rate-limiter`, package name: `ratelimiter`.
+Rate limiting library in Go with HTTP middleware. Uses the token bucket algorithm with lazy refill. Supports pluggable backends via the `BucketStore` interface (in-memory and Redis). Module name: `go-rate-limiter`, package name: `ratelimiter`.
 
 ## Commands
 - Run all tests: `go test ./...`
@@ -11,7 +11,9 @@ Rate limiting library in Go with HTTP middleware. Uses the token bucket algorith
 - Run a single test: `go test -run TestAllowN_RefillAfterWait ./...`
 - Race detector (recommended for concurrency changes): `go test -race ./...`
 - Build everything: `go build ./...`
-- Run the demo server: `go run example/main.go` then `curl -i http://localhost:8080/`
+- Run the demo server (in-memory): `go run example/main.go` then `curl -i http://localhost:8080/`
+- Run the demo server (Redis): `REDIS_ADDR=localhost:6379 go run example/main.go`
+- Start Redis locally: `docker run -d -p 6379:6379 redis`
 
 ## Architecture
 
@@ -23,7 +25,9 @@ The library is composed of three layers, each in its own file:
 
 3. **`middleware.go`** — `RateLimitMiddleware(store BucketStore) func(http.Handler) http.Handler` is a standalone function (not a method) that accepts any `BucketStore` implementation. Per request: extracts the client IP via `net.SplitHostPort(r.RemoteAddr)`, calls `store.AllowN(clientID, 1)`, sets `X-RateLimit-Limit` and `X-RateLimit-Remaining` headers on every response, and on denial sets `Retry-After` (rounded up by `+1` so clients never retry early) before returning 429.
 
-**Interfaces** in `limiter.go`: `RateLimiter` (bucket-level: `AllowN(n)`, `AllowNResult(n)`) and `BucketStore` (store-level: `AllowN(key, n) Result`). `Result` (in `result.go`) carries `Allowed`, `Limit int`, `Remaining int`, and `RetryAfter time.Duration`.
+4. **`redis_store.go`** — `RedisStore` implements `BucketStore` using Redis as the backend. `NewRedisStore(client, capacity, refillRate, ttl)` takes an externally-created `*redis.Client`. `AllowN(ctx, key, n)` executes an atomic Lua script that performs the entire token bucket algorithm (read state → refill → check → decrement → write → set TTL) in a single Redis call. No mutex needed — Redis single-threaded execution + Lua atomicity handles concurrency. Timestamps use `UnixMilli` for sub-second precision; elapsed time is divided by 1000 in the Lua script to convert to seconds for refill math. On error, fails closed (denies request).
+
+**Interfaces** in `limiter.go`: `RateLimiter` (bucket-level: `AllowN(n)`, `AllowNResult(n)`) and `BucketStore` (store-level: `AllowN(ctx, key, n) Result`). `Result` (in `result.go`) carries `Allowed`, `Remaining int`, `Limit int`, and `RetryAfter time.Duration`. The Lua script return array matches this field order.
 
 ## Critical Design Decisions
 
@@ -39,14 +43,18 @@ The library is composed of three layers, each in its own file:
 
 - **`net.SplitHostPort`** on `r.RemoteAddr` — strips the ephemeral client port so clients are identified by IP only. Without this, every connection from the same client gets a fresh bucket.
 
-- **BucketStore interface** — abstracts at the "check rate limit" level (`AllowN(key, n) Result`), not the "get bucket" level. Redis doesn't return bucket objects — it runs the entire check atomically server-side. Both `MemoryStore` and future `RedisStore` implement this interface. Middleware is decoupled from any concrete store type.
+- **BucketStore interface** — abstracts at the "check rate limit" level (`AllowN(ctx, key, n) Result`), not the "get bucket" level. Redis doesn't return bucket objects — it runs the entire check atomically server-side. Both `MemoryStore` and `RedisStore` implement this interface. Middleware is decoupled from any concrete store type. Context parameter enables Redis network timeouts; `MemoryStore` accepts but ignores it.
+
+- **Redis Lua script atomicity** — the entire read-modify-write cycle runs as a single atomic Lua script on Redis. Without this, two servers could read the same token count simultaneously and both allow a request (race condition). Redis `EXPIRE` replaces `MemoryStore.StartCleanup` — stale keys auto-delete after the configured TTL.
+
+- **Redis client passed in, not created internally** — `NewRedisStore` takes a `*redis.Client` for separation of concerns (connection config is the caller's responsibility), testability, and connection reuse.
 
 - **Stale bucket cleanup** — `MemoryStore.StartCleanup(ctx, interval, ttl)` launches a background goroutine using `time.Ticker` + `context.Context` to sweep stale buckets and prevent unbounded map growth. Lock ordering: store mutex first, then bucket mutex to read `lastAccessTime`, release bucket mutex before `delete`. Explicit lock/unlock (not defer) on bucket mutex inside the loop to avoid stacking defers.
 
 - **Graceful shutdown** — `example/main.go` uses `signal.NotifyContext` to create a context that cancels on SIGINT/SIGTERM. This context is passed to `StartCleanup` and used to block `main()` via `<-ctx.Done()`. On Ctrl+C: cleanup goroutine stops, `http.Server.Shutdown` drains in-flight requests.
 
 ## TODO
-- Redis-backed `RedisStore` implementation using Lua scripts for atomic token bucket operations.
+- Redis integration tests (`redis_store_test.go`).
 - Additional algorithms (sliding window, leaky bucket).
 
 ## Reference
